@@ -1,0 +1,1 @@
+python3 client.py download http://localhost:8080 subdir/downloaded.txt out.txt --token mytoken123
