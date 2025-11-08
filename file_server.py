@@ -18,6 +18,7 @@ import os
 import ssl
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -44,19 +45,28 @@ def secure_path(root: Path, rel_path: str) -> Path:
 		root_resolved = root
 	if not str(candidate).startswith(str(root_resolved)):
 		raise web.HTTPBadRequest(text="Invalid path")
+	# Additional check: ensure no symlinks point outside root
+	if candidate.is_symlink():
+		target = candidate.readlink()
+		if target.is_absolute():
+			target_resolved = target.resolve()
+		else:
+			target_resolved = (candidate.parent / target).resolve()
+		if not str(target_resolved).startswith(str(root_resolved)):
+			raise web.HTTPBadRequest(text="Invalid path")
 	return candidate
 
 
 async def list_files(request: web.Request) -> web.Response:
 	root = Path(request.app["root"]).resolve()
 	items = []
-	for dirpath, dirnames, filenames in os.walk(root):
-		for f in filenames:
-			full = Path(dirpath) / f
-			rel = full.relative_to(root)
+	# Limit to top-level directory only for security
+	for f in os.listdir(root):
+		full = root / f
+		if full.is_file():
 			stat = full.stat()
 			items.append({
-				"path": str(rel).replace("\\", "/"),
+				"path": f,
 				"size": stat.st_size,
 				"mtime": int(stat.st_mtime),
 			})
@@ -67,15 +77,30 @@ async def download_file(request: web.Request) -> web.StreamResponse:
 	rel_path = request.match_info.get("path", "")
 	file_path = secure_path(Path(request.app["root"]), rel_path)
 	if not file_path.exists() or not file_path.is_file():
+		logger.warning("File not found: %s", rel_path)
 		raise web.HTTPNotFound(text="File not found")
 	# aiohttp.web.FileResponse поддерживает range-запросы
+	logger.info("Downloaded %s", file_path)
 	return web.FileResponse(path=str(file_path))
+
+
+def secure_filename(filename: str) -> str:
+	"""Sanitize filename to prevent path traversal and other issues."""
+	import re
+	# Remove any path separators
+	filename = re.sub(r'[\/\\]', '', filename)
+	# Remove control characters
+	filename = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', filename)
+	# Limit length
+	filename = filename[:255]
+	return filename or "unnamed"
 
 
 async def upload(request: web.Request) -> web.Response:
 	reader = await request.multipart()
 	root = Path(request.app["root"])
 	saved = []
+	max_file_size = 100 * 1024 * 1024  # 100MB limit
 	async for part in reader:
 		# Ожидаем поле 'file' в multipart
 		if part.name != "file":
@@ -84,14 +109,20 @@ async def upload(request: web.Request) -> web.Response:
 		filename = part.filename
 		if not filename:
 			continue
+		filename = secure_filename(filename)
 		dest = secure_path(root, filename)
 		dest.parent.mkdir(parents=True, exist_ok=True)
-		# Записываем по частям
+		# Записываем по частям with size limit
+		size = 0
 		with open(dest, "wb") as f:
 			while True:
 				chunk = await part.read_chunk()  # type: ignore
 				if not chunk:
 					break
+				size += len(chunk)
+				if size > max_file_size:
+					dest.unlink(missing_ok=True)
+					raise web.HTTPRequestEntityTooLarge(text="File too large")
 				f.write(chunk)
 		saved.append({"path": str(dest.relative_to(root)), "size": dest.stat().st_size})
 		logger.info("Saved %s", dest)
@@ -102,18 +133,34 @@ async def delete_file(request: web.Request) -> web.Response:
 	rel_path = request.match_info.get("path", "")
 	file_path = secure_path(Path(request.app["root"]), rel_path)
 	if not file_path.exists():
+		logger.warning("File not found for deletion: %s", rel_path)
 		raise web.HTTPNotFound(text="File not found")
 	if file_path.is_dir():
+		logger.warning("Attempted to delete directory: %s", rel_path)
 		raise web.HTTPBadRequest(text="Path is a directory")
 	file_path.unlink()
 	logger.info("Deleted %s", file_path)
 	return web.json_response({"deleted": str(file_path.relative_to(Path(request.app["root"])) )})
 
 
+# Simple rate limiter
+rate_limits = {}
+
 @web.middleware
 async def auth_middleware(request: web.Request, handler):
 	token = request.app.get("token")
 	basic = request.app.get("basic_auth")
+
+	# Rate limiting: 100 requests per minute per IP
+	client_ip = request.remote or "unknown"
+	now = time.time()
+	if client_ip not in rate_limits:
+		rate_limits[client_ip] = []
+	rate_limits[client_ip] = [t for t in rate_limits[client_ip] if now - t < 60]
+	if len(rate_limits[client_ip]) >= 100:
+		logger.warning("Rate limit exceeded for %s", client_ip)
+		raise web.HTTPTooManyRequests(text="Rate limit exceeded")
+	rate_limits[client_ip].append(now)
 
 	# If no authentication is configured, allow all requests
 	if not token and not basic:
@@ -143,6 +190,7 @@ async def auth_middleware(request: web.Request, handler):
 				pass
 
 	# If we reach here, authentication failed
+	logger.warning("Authentication failed for %s from %s", request.path, client_ip)
 	raise web.HTTPUnauthorized(text="Missing or invalid credentials")
 
 
@@ -251,7 +299,7 @@ def main():
 				logger.error("Failed to generate self-signed certificate: %s", e)
 				raise
 
-		if not cert_path or not key_path: # 
+		if not cert_path or not key_path: #
 			raise SystemExit("TLS enabled but --cert/--key not provided (or use --generate-self-signed)")
 
 		ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
@@ -259,6 +307,7 @@ def main():
 
 		logger.info("Starting file server at https://%s:%s serving %s", args.host, args.port, root)
 	else:
+		logger.warning("Starting server without TLS. For production, use HTTPS to protect data in transit.")
 		logger.info("Starting file server at http://%s:%s serving %s", args.host, args.port, root)
 
 	web.run_app(app, host=args.host, port=args.port, ssl_context=ssl_context)
