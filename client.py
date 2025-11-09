@@ -34,8 +34,10 @@ import requests
 try:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
+    import customtkinter as ctk
 except Exception:
     tk = None  # GUI not available
+    ctk = None
 
 
 def is_safe_remote_path(p: str) -> bool:
@@ -159,8 +161,8 @@ def run_cli():
         out = download(args.server, args.remote_path, args.out, getattr(args, 'token', None), getattr(args, 'user', None), getattr(args, 'passwd', None), verify=verify_param)
         print(f"Saved to {out}")
     elif args.cmd == 'gui':
-        if tk is None:
-            print('Tkinter not available on this system')
+        if tk is None or ctk is None:
+            print('Tkinter or CustomTkinter not available on this system')
             raise SystemExit(1)
         gui_main()
     else:
@@ -200,6 +202,10 @@ def gui_main():
     Основная функция GUI. Создает интерфейс с разделами для сервера/аутентификации,
     загрузки, скачивания и списка файлов. Использует очередь для обновления UI из потоков.
     """
+    # Set CustomTkinter appearance
+    ctk.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
+    ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
+
     # queue carries either strings (status messages) or dicts {'type':'files','files':[...]}
     q: 'queue.Queue[object]' = queue.Queue()
 
@@ -278,19 +284,109 @@ def gui_main():
         except Exception as e:
             q.put(f"List files error: {e}")
 
+    def worker_list_files_ftp(server, user, passwd):
+        """
+        Функция-работник для получения списка файлов с FTP сервера в отдельном потоке.
+        """
+        progress.start()
+        try:
+            from ftplib import FTP
+            from urllib.parse import urlparse
+
+            parsed = urlparse(server)
+            host = parsed.hostname
+            port = parsed.port or 21
+
+            ftp = FTP()
+            ftp.connect(host, port)
+            ftp.login(user or 'anonymous', passwd or '')
+            files = []
+            ftp.retrlines('LIST', lambda x: files.append(x.split()[-1]) if x else None)
+            ftp.quit()
+            q.put({'type': 'files', 'files': files})
+            q.put('FTP: file list received')
+        except Exception as e:
+            q.put(f"FTP list files error: {e}")
+
+    def worker_upload_ftp(server, filepath, remote, user, passwd):
+        """
+        Функция-работник для загрузки файла на FTP сервер в отдельном потоке.
+        """
+        progress.start()
+        try:
+            from ftplib import FTP
+            from urllib.parse import urlparse
+
+            parsed = urlparse(server)
+            host = parsed.hostname
+            port = parsed.port or 21
+
+            ftp = FTP()
+            ftp.connect(host, port)
+            ftp.login(user or 'anonymous', passwd or '')
+
+            dest_name = remote or os.path.basename(filepath)
+            if not is_safe_remote_path(dest_name):
+                raise ValueError(f"Invalid remote path: {dest_name}")
+
+            with open(filepath, 'rb') as f:
+                ftp.storbinary(f'STOR {dest_name}', f)
+            ftp.quit()
+            q.put(f"FTP upload success: {dest_name}")
+        except Exception as e:
+            q.put(f"FTP upload error: {e}")
+
+    def worker_download_ftp(server, remote_path, outpath, user, passwd):
+        """
+        Функция-работник для скачивания файла с FTP сервера в отдельном потоке.
+        """
+        progress.start()
+        try:
+            from ftplib import FTP
+            from urllib.parse import urlparse
+
+            if not is_safe_remote_path(remote_path):
+                raise ValueError(f"Invalid remote path: {remote_path}")
+
+            parsed = urlparse(server)
+            host = parsed.hostname
+            port = parsed.port or 21
+
+            ftp = FTP()
+            ftp.connect(host, port)
+            ftp.login(user or 'anonymous', passwd or '')
+
+            Path(outpath).parent.mkdir(parents=True, exist_ok=True)
+            with open(outpath, 'wb') as f:
+                ftp.retrbinary(f'RETR {remote_path}', f.write)
+            ftp.quit()
+            q.put(f"FTP downloaded to: {outpath}")
+        except Exception as e:
+            q.put(f"FTP download error: {e}")
+
     # Создание главного окна
-    root = tk.Tk()
+    root = ctk.CTk()
     root.title('File Server Client')
     root.geometry('1000x600')  # Установка начального размера
     root.resizable(True, True)  # Сделать окно изменяемым по размеру
 
-    # Панель меню
+    # Панель меню (using standard tk.Menu for compatibility)
     menubar = tk.Menu(root)
     root.config(menu=menubar)
 
     help_menu = tk.Menu(menubar, tearoff=0)
     menubar.add_cascade(label="Help", menu=help_menu)
-    help_menu.add_command(label="About", command=lambda: messagebox.showinfo("About", "File Server Client GUI\nVersion 1.0\nSupports upload/download with auth."))
+    help_menu.add_command(label="About", command=lambda: messagebox.showinfo("About", "File Server Client GUI\nVersion 1.0\nSupports upload/download with auth and FTP."))
+
+    # Appearance mode toggle
+    def change_appearance_mode_event(new_appearance_mode: str):
+        ctk.set_appearance_mode(new_appearance_mode)
+
+    appearance_menu = tk.Menu(menubar, tearoff=0)
+    menubar.add_cascade(label="Appearance", menu=appearance_menu)
+    appearance_menu.add_command(label="Light", command=lambda: change_appearance_mode_event("Light"))
+    appearance_menu.add_command(label="Dark", command=lambda: change_appearance_mode_event("Dark"))
+    appearance_menu.add_command(label="System", command=lambda: change_appearance_mode_event("System"))
 
     # Контейнер для разделения на левую и правую панели
     container = tk.Frame(root)
@@ -305,39 +401,46 @@ def gui_main():
     right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
     # Левая панель: разделы для сервера/аутентификации, загрузки и скачивания
-    server_frame = ttk.LabelFrame(left, text="Server & Authentication", padding=(10, 5))
+    server_frame = ctk.CTkFrame(left)
     server_frame.pack(fill=tk.X, pady=(0, 10))
 
-    # Поля для сервера и аутентификации
-    ttk.Label(server_frame, text='Server (http(s)://host:port)').grid(row=0, column=0, sticky='w')
-    server_e = ttk.Entry(server_frame, width=50)
-    server_e.grid(row=0, column=1, columnspan=3, sticky='we', padx=(5,0))
-    Tooltip(server_e, "Enter the server URL, e.g., http://localhost:8080")
+    ctk.CTkLabel(server_frame, text="Server & Authentication").pack(anchor="w", padx=10, pady=(10,5))
+
+    # Load config first
     _cfg = load_config()
+
+    # Server type selection
+    server_type_var = tk.StringVar(value=_cfg.get('server_type', 'HTTP'))
+    ctk.CTkLabel(server_frame, text="Server Type:").pack(anchor="w", padx=10)
+    server_type_combo = ctk.CTkComboBox(server_frame, values=["HTTP", "FTP"], variable=server_type_var)
+    server_type_combo.pack(fill=tk.X, padx=10, pady=(0,10))
+
+    # Поля для сервера и аутентификации
+    ctk.CTkLabel(server_frame, text='Server (http(s)://host:port or ftp://host:port)').pack(anchor="w", padx=10)
+    server_e = ctk.CTkEntry(server_frame, width=400)
+    server_e.pack(fill=tk.X, padx=10, pady=(0,10))
     server_e.insert(0, _cfg.get('server', 'http://localhost:8080'))
 
-    ttk.Label(server_frame, text='Token').grid(row=1, column=0, sticky='w')
-    token_e = ttk.Entry(server_frame, width=30)
-    token_e.grid(row=1, column=1, sticky='w', padx=(5,0))
-    Tooltip(token_e, "Optional auth token for server access")
+    ctk.CTkLabel(server_frame, text='Token (HTTP only)').pack(anchor="w", padx=10)
+    token_e = ctk.CTkEntry(server_frame, width=300)
+    token_e.pack(fill=tk.X, padx=10, pady=(0,10))
     token_e.insert(0, _cfg.get('token', ''))
 
-    ttk.Label(server_frame, text='Basic user').grid(row=1, column=2, sticky='w')
-    user_e = ttk.Entry(server_frame, width=15)
-    user_e.grid(row=1, column=3, sticky='w', padx=(5,0))
-    Tooltip(user_e, "Username for basic authentication")
+    ctk.CTkLabel(server_frame, text='Username').pack(anchor="w", padx=10)
+    user_e = ctk.CTkEntry(server_frame, width=300)
+    user_e.pack(fill=tk.X, padx=10, pady=(0,10))
     user_e.insert(0, _cfg.get('basic_user', ''))
 
-    ttk.Label(server_frame, text='Basic pass').grid(row=2, column=2, sticky='w')
-    pass_e = ttk.Entry(server_frame, width=15, show='*')
-    pass_e.grid(row=2, column=3, sticky='w', padx=(5,0))
-    Tooltip(pass_e, "Password for basic authentication")
+    ctk.CTkLabel(server_frame, text='Password').pack(anchor="w", padx=10)
+    pass_e = ctk.CTkEntry(server_frame, width=300, show='*')
+    pass_e.pack(fill=tk.X, padx=10, pady=(0,10))
     pass_e.insert(0, _cfg.get('basic_pass', ''))
 
-    ttk.Label(server_frame, text='CA cert (optional)').grid(row=2, column=0, sticky='w')
-    ca_e = ttk.Entry(server_frame, width=40)
-    ca_e.grid(row=2, column=1, sticky='we', padx=(5,0))
-    Tooltip(ca_e, "Path to CA certificate bundle for TLS verification")
+    ctk.CTkLabel(server_frame, text='CA cert (HTTP only, optional)').pack(anchor="w", padx=10)
+    ca_frame = ctk.CTkFrame(server_frame, fg_color="transparent")
+    ca_frame.pack(fill=tk.X, padx=10, pady=(0,10))
+    ca_e = ctk.CTkEntry(ca_frame, width=300)
+    ca_e.pack(side=tk.LEFT, fill=tk.X, expand=True)
     ca_e.insert(0, _cfg.get('ca_cert', ''))
 
     def browse_ca():  # Функция для выбора файла CA сертификата
@@ -346,47 +449,44 @@ def gui_main():
             ca_e.delete(0, tk.END)
             ca_e.insert(0, p)
 
-    ttk.Button(server_frame, text='Browse CA', command=browse_ca).grid(row=2, column=4, sticky='w', padx=(5,0))
+    ctk.CTkButton(ca_frame, text='Browse', command=browse_ca, width=80).pack(side=tk.RIGHT, padx=(10,0))
+
     insecure_var = tk.BooleanVar(value=bool(_cfg.get('insecure', False)))
-    insecure_cb = ttk.Checkbutton(server_frame, text='Insecure (disable TLS verify)', variable=insecure_var)
-    insecure_cb.grid(row=3, column=1, sticky='w', pady=(5,0))
-    Tooltip(insecure_cb, "Disable TLS certificate verification (not recommended)")
+    insecure_cb = ctk.CTkCheckBox(server_frame, text='Insecure (disable TLS verify)', variable=insecure_var)
+    insecure_cb.pack(anchor="w", padx=10, pady=(0,10))
 
     # Раздел для загрузки файлов
-    upload_frame = ttk.LabelFrame(left, text="Upload", padding=(10, 5))
+    upload_frame = ctk.CTkFrame(left)
     upload_frame.pack(fill=tk.X, pady=(0, 10))
 
-    ttk.Label(upload_frame, text='Remote path (optional)').grid(row=0, column=0, sticky='w')
-    remote_e = ttk.Entry(upload_frame, width=40)
-    remote_e.grid(row=0, column=1, sticky='we', padx=(5,0))
-    Tooltip(remote_e, "Optional remote path relative to server data dir (e.g., subdir/file.txt)")
+    ctk.CTkLabel(upload_frame, text="Upload").pack(anchor="w", padx=10, pady=(10,5))
 
     def on_upload():  # Функция обработки загрузки файла
         # Открываем диалог выбора файла
         fp = filedialog.askopenfilename()
         if not fp:
             return  # Пользователь отменил выбор
-        srv = server_e.get().strip(); rem = remote_e.get().strip() or None
+        srv = server_e.get().strip(); rem = None
+        server_type = server_type_var.get()
         tok = token_e.get().strip() or None; u = user_e.get().strip() or None; p = pass_e.get() or None
-        # Если указан удаленный путь, проверяем его безопасность
-        if rem and not is_safe_remote_path(rem):
-            messagebox.showerror('Error', 'Remote path is invalid or unsafe')
-            return
         ca = ca_e.get().strip()
         insecure = insecure_var.get()
         verify_param = False if insecure else (ca if ca else True)
-        threading.Thread(target=worker_upload, args=(srv, fp, rem, tok, u, p, verify_param), daemon=True).start()
+        if server_type == 'FTP':
+            threading.Thread(target=worker_upload_ftp, args=(srv, fp, rem, u, p), daemon=True).start()
+        else:
+            threading.Thread(target=worker_upload, args=(srv, fp, rem, tok, u, p, verify_param), daemon=True).start()
 
-    upload_btn = ttk.Button(upload_frame, text='Select & Upload File', command=on_upload)
-    upload_btn.grid(row=0, column=2, sticky='w', padx=(5,0))
-    Tooltip(upload_btn, "Select a local file and upload it to the server")
+    upload_btn = ctk.CTkButton(upload_frame, text='Select & Upload File', command=on_upload)
+    upload_btn.pack(fill=tk.X, padx=10, pady=(0,10))
 
     # Кнопки для сохранения настроек и обновления
-    buttons_frame = ttk.Frame(left)
+    buttons_frame = ctk.CTkFrame(left, fg_color="transparent")
     buttons_frame.pack(fill=tk.X, pady=(0, 10))
 
     def on_save_settings():  # Функция сохранения настроек
         data = {
+            'server_type': server_type_var.get(),
             'server': server_e.get().strip(),
             'token': token_e.get().strip(),
             'basic_user': user_e.get().strip(),
@@ -396,48 +496,53 @@ def gui_main():
         }
         threading.Thread(target=save_config, args=(data,), daemon=True).start()
 
-    save_btn = ttk.Button(buttons_frame, text='Save settings', command=on_save_settings)
-    save_btn.grid(row=0, column=0, sticky='w', padx=(0,5))
-    Tooltip(save_btn, "Save current settings to config file")
+    save_btn = ctk.CTkButton(buttons_frame, text='Save settings', command=on_save_settings)
+    save_btn.pack(side=tk.LEFT, padx=(10,5), pady=10)
 
     def on_refresh():  # Функция обновления списка файлов и проверки аутентификации
         """Trigger a refresh/list-files to check authentication and populate file list."""
         srv = server_e.get().strip()
+        server_type = server_type_var.get()
         tok = token_e.get().strip() or None
         u = user_e.get().strip() or None
         p = pass_e.get() or None
         ca = ca_e.get().strip()
         insecure = insecure_var.get()
         verify_param = False if insecure else (ca if ca else True)
-        threading.Thread(target=worker_list_files, args=(srv, tok, u, p, verify_param), daemon=True).start()
+        if server_type == 'FTP':
+            threading.Thread(target=worker_list_files_ftp, args=(srv, u, p), daemon=True).start()
+        else:
+            threading.Thread(target=worker_list_files, args=(srv, tok, u, p, verify_param), daemon=True).start()
 
-    refresh_btn = ttk.Button(buttons_frame, text='Refresh / Check auth', command=on_refresh)
-    refresh_btn.grid(row=0, column=1, sticky='w')
-    Tooltip(refresh_btn, "Refresh the file list and check authentication")
+    refresh_btn = ctk.CTkButton(buttons_frame, text='Refresh / Check auth', command=on_refresh)
+    refresh_btn.pack(side=tk.LEFT, padx=(0,10), pady=10)
 
     # Раздел для скачивания файлов
-    download_frame = ttk.LabelFrame(left, text="Download", padding=(10, 5))
+    download_frame = ctk.CTkFrame(left)
     download_frame.pack(fill=tk.X, pady=(0, 10))
 
-    ttk.Label(download_frame, text='Download remote path').grid(row=0, column=0, sticky='w')
-    dremote_e = ttk.Entry(download_frame, width=40)
-    dremote_e.grid(row=0, column=1, sticky='we', padx=(5,0))
-    Tooltip(dremote_e, "Remote path to download, e.g., file.txt or subdir/file.txt")
+    ctk.CTkLabel(download_frame, text="Download").pack(anchor="w", padx=10, pady=(10,5))
 
-    ttk.Label(download_frame, text='Save as (local)').grid(row=1, column=0, sticky='w')
-    out_e = ttk.Entry(download_frame, width=40)
-    out_e.grid(row=1, column=1, sticky='we', padx=(5,0))
-    Tooltip(out_e, "Local path to save the downloaded file")
+    ctk.CTkLabel(download_frame, text='Download remote path').pack(anchor="w", padx=10)
+    dremote_e = ctk.CTkEntry(download_frame, width=400)
+    dremote_e.pack(fill=tk.X, padx=10, pady=(0,10))
+
+    ctk.CTkLabel(download_frame, text='Save as (local)').pack(anchor="w", padx=10)
+    out_frame = ctk.CTkFrame(download_frame, fg_color="transparent")
+    out_frame.pack(fill=tk.X, padx=10, pady=(0,10))
+    out_e = ctk.CTkEntry(out_frame, width=300)
+    out_e.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     def browse_out():  # Функция для выбора места сохранения файла
         p = filedialog.asksaveasfilename()
         if p:
             out_e.delete(0, tk.END); out_e.insert(0, p)
 
-    ttk.Button(download_frame, text='Browse', command=browse_out).grid(row=1, column=2, sticky='w', padx=(5,0))
+    ctk.CTkButton(out_frame, text='Browse', command=browse_out, width=80).pack(side=tk.RIGHT, padx=(10,0))
 
     def on_download():  # Функция обработки скачивания файла
         srv = server_e.get().strip(); rem = dremote_e.get().strip(); outp = out_e.get().strip()
+        server_type = server_type_var.get()
         tok = token_e.get().strip() or None; u = user_e.get().strip() or None; p = pass_e.get() or None
         if not rem or not outp:
             messagebox.showerror('Error', 'Specify remote path and local output file')
@@ -449,19 +554,21 @@ def gui_main():
         ca = ca_e.get().strip()
         insecure = insecure_var.get()
         verify_param = False if insecure else (ca if ca else True)
-        threading.Thread(target=worker_download, args=(srv, rem, outp, tok, u, p, verify_param), daemon=True).start()
+        if server_type == 'FTP':
+            threading.Thread(target=worker_download_ftp, args=(srv, rem, outp, u, p), daemon=True).start()
+        else:
+            threading.Thread(target=worker_download, args=(srv, rem, outp, tok, u, p, verify_param), daemon=True).start()
 
-    download_btn = ttk.Button(download_frame, text='Download', command=on_download)
-    download_btn.grid(row=0, column=3, sticky='w', padx=(5,0))
-    Tooltip(download_btn, "Download the specified remote file to local path")
+    download_btn = ctk.CTkButton(download_frame, text='Download', command=on_download)
+    download_btn.pack(fill=tk.X, padx=10, pady=(0,10))
 
     # Правая панель: список удаленных файлов
-    ttk.Label(right, text='Remote files (data/) - double-click to download').pack(anchor='w')
-    listbox_frame = ttk.Frame(right)
-    listbox_frame.pack(fill=tk.BOTH, expand=True)
-    listbox = tk.Listbox(listbox_frame, width=60, height=20)
+    ctk.CTkLabel(right, text='Remote files - double-click to download', text_color='black').pack(anchor='w', padx=10, pady=(10,5))
+    listbox_frame = ctk.CTkFrame(right)
+    listbox_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
+    listbox = tk.Listbox(listbox_frame, width=60, height=20, bg=ctk.ThemeManager.theme["CTkFrame"]["fg_color"][1], fg="white", selectbackground=ctk.ThemeManager.theme["CTkButton"]["fg_color"][1])
     listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-    scrollbar = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL, command=listbox.yview)
+    scrollbar = ctk.CTkScrollbar(listbox_frame, orientation="vertical", command=listbox.yview)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
     listbox.config(yscrollcommand=scrollbar.set)
 
@@ -479,30 +586,34 @@ def gui_main():
         save_path = filedialog.asksaveasfilename(initialfile=default)
         if not save_path:
             return
-        srv = server_e.get().strip(); tok = token_e.get().strip() or None; u = user_e.get().strip() or None; p = pass_e.get() or None
+        srv = server_e.get().strip(); server_type = server_type_var.get()
+        tok = token_e.get().strip() or None; u = user_e.get().strip() or None; p = pass_e.get() or None
         ca = ca_e.get().strip()
         insecure = insecure_var.get()
         verify_param = False if insecure else (ca if ca else True)
-        threading.Thread(target=worker_download, args=(srv, val, save_path, tok, u, p, verify_param), daemon=True).start()
+        if server_type == 'FTP':
+            threading.Thread(target=worker_download_ftp, args=(srv, val, save_path, u, p), daemon=True).start()
+        else:
+            threading.Thread(target=worker_download, args=(srv, val, save_path, tok, u, p, verify_param), daemon=True).start()
 
     listbox.bind('<Double-1>', on_list_double_click)
 
     # Кнопки для управления списком файлов
-    buttons_right = ttk.Frame(right)
-    buttons_right.pack(fill=tk.X, pady=(6,0))
-    ttk.Button(buttons_right, text='Refresh List', command=on_refresh).pack(side=tk.LEFT, padx=(0,5))
-    ttk.Button(buttons_right, text='Clear list', command=lambda: listbox.delete(0, tk.END)).pack(side=tk.LEFT)
+    buttons_right = ctk.CTkFrame(right, fg_color="transparent")
+    buttons_right.pack(fill=tk.X, padx=10, pady=(0,10))
+    ctk.CTkButton(buttons_right, text='Refresh List', command=on_refresh).pack(side=tk.LEFT, padx=(0,5))
+    ctk.CTkButton(buttons_right, text='Clear list', command=lambda: listbox.delete(0, tk.END)).pack(side=tk.LEFT)
 
     # Нижняя панель: статус и прогресс-бар
-    status_frame = ttk.Frame(root)
+    status_frame = ctk.CTkFrame(root)
     status_frame.pack(fill=tk.BOTH, padx=10, pady=(0,10))
 
-    ttk.Label(status_frame, text='Status:').pack(anchor='w')
-    status = tk.Text(status_frame, height=4)
-    status.pack(fill=tk.BOTH, expand=True)
+    ctk.CTkLabel(status_frame, text='Status:').pack(anchor='w', padx=10, pady=(10,5))
+    status = ctk.CTkTextbox(status_frame, height=80)
+    status.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
 
-    progress = ttk.Progressbar(status_frame, orient='horizontal', mode='indeterminate')
-    progress.pack(fill=tk.X, pady=(5,0))
+    progress = ctk.CTkProgressBar(status_frame, orientation='horizontal', mode='indeterminate')
+    progress.pack(fill=tk.X, padx=10, pady=(0,10))
 
     def poll_queue():  # Функция опроса очереди сообщений из потоков
         try:
@@ -524,12 +635,12 @@ def gui_main():
                 else:
                     # Раскрашиваем сообщения по цветам
                     if 'error' in str(msg).lower() or 'failed' in str(msg).lower():
-                        status.insert(tk.END, str(msg) + '\n', 'error')
+                        status.insert("end", str(msg) + '\n', "error")
                     elif 'success' in str(msg).lower():
-                        status.insert(tk.END, str(msg) + '\n', 'success')
+                        status.insert("end", str(msg) + '\n', "success")
                     else:
-                        status.insert(tk.END, str(msg) + '\n')
-                    status.see(tk.END)
+                        status.insert("end", str(msg) + '\n')
+                    status.see("end")
                     progress.stop()
         except queue.Empty:
             pass
@@ -542,6 +653,7 @@ def gui_main():
     # Автосохранение настроек при закрытии окна
     def on_closing():  # Функция обработки закрытия окна
         data = {
+            'server_type': server_type_var.get(),
             'server': server_e.get().strip(),
             'token': token_e.get().strip(),
             'basic_user': user_e.get().strip(),

@@ -1,12 +1,13 @@
 # File server (local network)
 
-A small HTTP/HTTPS file server for local networks with a simple client and optional web UI.
+A small HTTP/HTTPS/FTP file server for local networks with a simple client and optional web UI.
 
 Features
 - Listing, upload (multipart/form-data), download (Range support), delete files
 - Simple token authentication (X-Auth-Token or ?token=)
 - Restricts access to a `data` folder next to the script
 - HTTPS support (local certificates or real CA)
+- FTP protocol support for compatibility with FTP clients
 
 Requirements
 - Python 3.8+
@@ -33,7 +34,7 @@ Important CLI options
 - --dir — directory to serve (default: `data` next to the script). Relative paths are resolved relative to the script directory.
 - --token — simple authentication token (optional)
 - --tls — (legacy) enable HTTPS (kept for compatibility)
-- --protocol — new argument: `http` or `https`. If provided, it overrides `--tls`.
+- --protocol — new argument: `http`, `https` or `ftp`. If provided, it overrides `--tls`.
 - --cert/--key — paths to TLS certificate and private key (PEM)
 - --generate-self-signed — generate a temporary self-signed certificate (requires openssl)
 
@@ -194,7 +195,7 @@ curl -X DELETE -H "X-Auth-Token: mysecret" "http://localhost:8080/delete/subdir/
 
 6) CLI parameter explanations
 
-- `--protocol` — selects `http` or `https`. Overrides legacy `--tls` if provided.
+- `--protocol` — selects `http`, `https` or `ftp`. Overrides legacy `--tls` if provided.
 - `--tls` — legacy flag to enable HTTPS (kept for backward compatibility).
 - `--cert` / `--key` — TLS certificate and private key (PEM format).
 - `--generate-self-signed` — generate a temporary self-signed certificate.
@@ -250,6 +251,21 @@ python3 file_server.py --protocol https --generate-self-signed --host 0.0.0.0 --
 python3 file_server.py --protocol https --cert ./certs/server.crt --key ./certs/server.key --host 0.0.0.0 --port 443 --basic-user alice --basic-pass s3cr3t
 ```
 
+- FTP + token:
+```bash
+python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21 --token mysecret
+```
+
+- FTP + Basic auth:
+```bash
+python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21 --basic-user alice --basic-pass s3cr3t
+```
+
+- FTP without auth (anonymous):
+```bash
+python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21
+```
+
 Checklist to avoid browser warnings (trusted certificates)
 --------------------------------------------------------
 1) Choose how to obtain a trusted certificate:
@@ -293,3 +309,13 @@ python3 file_server.py \
   --basic-user alice \
   --basic-pass s3cr3t \
   --token mytoken123
+
+
+# FTP with token
+python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21 --token mysecret
+
+# FTP with basic auth
+python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21 --basic-user alice --basic-pass s3cr3t
+
+# FTP anonymous(Purely for testing, do not use for serious tasks!!)
+python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21

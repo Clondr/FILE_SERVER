@@ -21,10 +21,18 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Optional
-
+from atexit import register
 import base64
 
 from aiohttp import web
+
+try:
+    from pyftpdlib.authorizers import DummyAuthorizer
+    from pyftpdlib.handlers import FTPHandler
+    from pyftpdlib.servers import FTPServer
+    FTP_AVAILABLE = True
+except ImportError:
+    FTP_AVAILABLE = False
 
 ROOT_VAR = "FILES_ROOT"
 
@@ -32,7 +40,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("file_server")
 
 
-def secure_path(root: Path, rel_path: str) -> Path:
+def secure_path(root: Path, rel_path: str) -> Path: # Проверяет и возвращает безопасный путь внутри root
 	"""Проверяет и возвращает безопасный путь внутри root.
 
 	Бросает HTTPBadRequest, если путь выходит за пределы корня.
@@ -57,7 +65,8 @@ def secure_path(root: Path, rel_path: str) -> Path:
 	return candidate
 
 
-async def list_files(request: web.Request) -> web.Response:
+async def list_files(request: web.Request) -> web.Response: # """Возвращает список файлов в корневом каталоге."""
+
 	root = Path(request.app["root"]).resolve()
 	items = []
 	# Limit to top-level directory only for security
@@ -73,7 +82,8 @@ async def list_files(request: web.Request) -> web.Response:
 	return web.json_response({"files": items})
 
 
-async def download_file(request: web.Request) -> web.StreamResponse:
+async def download_file(request: web.Request) -> web.StreamResponse: # """Отдает файл с поддержкой Range-запросов."""
+
 	rel_path = request.match_info.get("path", "")
 	file_path = secure_path(Path(request.app["root"]), rel_path)
 	if not file_path.exists() or not file_path.is_file():
@@ -84,19 +94,24 @@ async def download_file(request: web.Request) -> web.StreamResponse:
 	return web.FileResponse(path=str(file_path))
 
 
-def secure_filename(filename: str) -> str:
+def secure_filename(filename: str) -> str: # """Sanitize filename to prevent path traversal and other issues."""
+
 	"""Sanitize filename to prevent path traversal and other issues."""
 	import re
 	# Remove any path separators
 	filename = re.sub(r'[\/\\]', '', filename)
 	# Remove control characters
-	filename = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', filename)
+	filename = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', filename) # 
+	# Remove reserved characters on Windows
+	filename = re.sub(r'[<>:"|?*\x00-\x1f]', '_', filename) # 
+
 	# Limit length
 	filename = filename[:255]
 	return filename or "unnamed"
 
 
-async def upload(request: web.Request) -> web.Response:
+async def upload(request: web.Request) -> web.Response: # """Принимает multipart/form-data и сохраняет файлы в корневой каталог."""
+
 	reader = await request.multipart()
 	root = Path(request.app["root"])
 	saved = []
@@ -110,12 +125,17 @@ async def upload(request: web.Request) -> web.Response:
 		if not filename:
 			continue
 		filename = secure_filename(filename)
+		if not filename:
+			continue
+
 		dest = secure_path(root, filename)
 		dest.parent.mkdir(parents=True, exist_ok=True)
 		# Записываем по частям with size limit
 		size = 0
-		with open(dest, "wb") as f:
-			while True:
+		with open(dest, "wb") as f: # type: ignore
+
+			while True: # Цикл чтения чанков
+
 				chunk = await part.read_chunk()  # type: ignore
 				if not chunk:
 					break
@@ -129,8 +149,12 @@ async def upload(request: web.Request) -> web.Response:
 	return web.json_response({"saved": saved})
 
 
-async def delete_file(request: web.Request) -> web.Response:
-	rel_path = request.match_info.get("path", "")
+async def delete_file(request: web.Request) -> web.Response: # """Удаляет файл по указанному пути."""
+
+	rel_path = request.match_info.get("path", "") # 
+	if not rel_path:
+		raise web.HTTPBadRequest(text="Missing path")
+
 	file_path = secure_path(Path(request.app["root"]), rel_path)
 	if not file_path.exists():
 		logger.warning("File not found for deletion: %s", rel_path)
@@ -147,20 +171,21 @@ async def delete_file(request: web.Request) -> web.Response:
 rate_limits = {}
 
 @web.middleware
-async def auth_middleware(request: web.Request, handler):
-	token = request.app.get("token")
-	basic = request.app.get("basic_auth")
+async def auth_middleware(request: web.Request, handler): # """Проверяет токен авторизации, если он задан."""
+
+	token = request.app.get("token") # 
+	basic = request.app.get("basic_auth") # 
 
 	# Rate limiting: 100 requests per minute per IP
 	client_ip = request.remote or "unknown"
 	now = time.time()
 	if client_ip not in rate_limits:
 		rate_limits[client_ip] = []
-	rate_limits[client_ip] = [t for t in rate_limits[client_ip] if now - t < 60]
+	rate_limits[client_ip] = [t for t in rate_limits[client_ip] if now - t < 60] # 
 	if len(rate_limits[client_ip]) >= 100:
-		logger.warning("Rate limit exceeded for %s", client_ip)
-		raise web.HTTPTooManyRequests(text="Rate limit exceeded")
-	rate_limits[client_ip].append(now)
+		logger.warning("Rate limit exceeded for %s", client_ip) # 
+		raise web.HTTPTooManyRequests(text="Rate limit exceeded") # 
+	rate_limits[client_ip].append(now) # 
 
 	# If no authentication is configured, allow all requests
 	if not token and not basic:
@@ -170,12 +195,17 @@ async def auth_middleware(request: web.Request, handler):
 	if request.method == "GET" and (request.path == "/" or request.path.startswith("/ui")):
 		return await handler(request)
 
-	# Try token authentication first (header or query)
-	req_token = request.headers.get("X-Auth-Token") or request.query.get("token")
-	if token and req_token and req_token == token:
-		return await handler(request)
+	# Check authentication based on configuration
+	token_valid = False
+	basic_valid = False
 
-	# Try HTTP Basic authentication if configured
+	# Check token if configured
+	if token:
+		req_token = request.headers.get("X-Auth-Token") or request.query.get("token")
+		if req_token and req_token == token:
+			token_valid = True
+
+	# Check basic auth if configured
 	if basic:
 		auth_hdr = request.headers.get("Authorization", "")
 		if auth_hdr.startswith("Basic "):
@@ -184,26 +214,56 @@ async def auth_middleware(request: web.Request, handler):
 				decoded = base64.b64decode(b64).decode("utf-8")
 				user, passwd = decoded.split(":", 1)
 				if user == basic[0] and passwd == basic[1]:
-					return await handler(request)
+					basic_valid = True
 			except Exception:
-				# fall through to unauthorized
 				pass
 
-	# If we reach here, authentication failed
-	logger.warning("Authentication failed for %s from %s", request.path, client_ip)
-	raise web.HTTPUnauthorized(text="Missing or invalid credentials")
+	# Authentication logic:
+	# - If only token configured: require token
+	# - If only basic configured: require basic
+	# - If both configured: require both
+	if token and basic: # Если токен и basic настроены
+
+		# Both must be valid
+		if not (token_valid and basic_valid):
+			logger.warning("Authentication failed for %s from %s (both token and basic required)", request.path, client_ip)
+			raise web.HTTPUnauthorized(text="Missing or invalid credentials")
+	elif token:
+		# Only token required
+		if not token_valid:
+			logger.warning("Authentication failed for %s from %s (token required)", request.path, client_ip)
+			raise web.HTTPUnauthorized(text="Missing or invalid credentials")
+	elif basic:
+		# Only basic required
+		if not basic_valid:
+			logger.warning("Authentication failed for %s from %s (basic auth required)", request.path, client_ip)
+			raise web.HTTPUnauthorized(text="Missing or invalid credentials")
+
+	return await handler(request) # # Вызов следующего обработчика в цепочке
 
 
-async def index(request: web.Request) -> web.Response:
+
+async def index(request: web.Request) -> web.Response: # """Обработчик главной страницы."""
+	if request.path != "/":
+
 		# Перенаправление на веб-интерфейс
 		raise web.HTTPFound(location='/ui/')
 
 
-def create_app(root: str, token: Optional[str] = None) -> web.Application:
-	app = web.Application(middlewares=[auth_middleware])
-	app["root"] = str(Path(root))
+def create_app(root: str, token: Optional[str] = None) -> web.Application: # """Создаёт aiohttp приложение."""
+
+	app = web.Application(middlewares=[auth_middleware]) # 
+	logger.info("Serving directory: %s", root)
+
+	app["root"] = str(Path(root)) # 
+	logger.info("Serving directory: %s", app["root"])
+
 	app["token"] = token
+	logger.info("Token auth enabled: %s", token is not None)
+
 	app["basic_auth"] = None
+	logger.info("Basic auth enabled: %s", app["basic_auth"] is not None)
+
 	app.add_routes([
 		web.get("/", index),
 		web.get("/files", list_files),
@@ -224,8 +284,9 @@ def create_app(root: str, token: Optional[str] = None) -> web.Application:
 	return app
 
 
-def main():
-	parser = argparse.ArgumentParser(description="Simple file server for local network")
+def main(): # """Главная функция для запуска сервера."""
+
+	parser = argparse.ArgumentParser(description="Simple file server for local network") # Подсказки
 	parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
 	parser.add_argument("--port", type=int, default=8080, help="Port to bind (default: 8080)")
 	parser.add_argument("--dir", default=os.environ.get(ROOT_VAR, "data"), help="Directory to serve (default: data under the script dir or $FILES_ROOT)")
@@ -233,21 +294,31 @@ def main():
 	parser.add_argument("--basic-user", default=os.environ.get("FILE_SERVER_USER"), help="Username for HTTP Basic auth (optional)")
 	parser.add_argument("--basic-pass", default=os.environ.get("FILE_SERVER_PASS"), help="Password for HTTP Basic auth (optional)")
 	parser.add_argument("--tls", action="store_true", help="(legacy) Enable HTTPS (requires --cert and --key or use --generate-self-signed)")
-	parser.add_argument("--protocol", choices=("http", "https"), default=None,
-						help="Protocol to run the server with. Overrides --tls when provided. Choices: http, https")
+	parser.add_argument("--protocol", choices=("http", "https", "ftp"), default=None,
+						help="Protocol to run the server with. Overrides --tls when provided. Choices: http, https, ftp")
 	parser.add_argument("--cert", help="Path to TLS certificate (PEM)")
 	parser.add_argument("--key", help="Path to TLS private key (PEM)")
 	parser.add_argument("--generate-self-signed", action="store_true", help="Generate a temporary self-signed cert (requires openssl) and use it for TLS")
+	parser.add_argument("--ftp-allow-anonymous", action="store_true", help="Allow anonymous FTP access (default: False)")
+	parser.add_argument("--ftp-permissions", choices=["read", "write", "full"], default="full", help="FTP permissions: read, write, or full (default: full)")
 	args = parser.parse_args()
 
 	# Принудительно ограничиваем доступ папкой `data` рядом со скриптом.
 	# Если пользователь передал относительный путь — он трактуется относительно каталога скрипта.
-	script_dir = Path(__file__).parent.resolve()
-	allowed_root = script_dir / "data"
+	script_dir = Path(__file__).parent.resolve() # 
+	# Принудительно ограничиваем доступ папкой `data` рядом со скриптом.
+
+	allowed_root = script_dir / "data" # 
+	logger.info("Allowed root directory: %s", allowed_root)
+
 
 	# Если задан переменной окружения полный путь, используем его только если он внутри allowed_root.
-	requested = Path(args.dir)
-	if not requested.is_absolute():
+	requested = Path(args.dir) # 
+	# Преобразуем в абсолютный путь, если он относительный
+
+	if not requested.is_absolute(): # 
+		# Если передан относительный путь, преобразуем его в абсолютный относительно script_dir
+
 		root = (script_dir / requested).resolve()
 	else:
 		root = requested.resolve()
@@ -257,29 +328,104 @@ def main():
 		allowed_root_resolved = allowed_root.resolve()
 	except Exception:
 		allowed_root_resolved = allowed_root
+		print('Используй нормальные пути!')
 
-	if not str(root).startswith(str(allowed_root_resolved)):
+	if not str(root).startswith(str(allowed_root_resolved)): # 
+		# Если root не находится внутри allowed_root, выводим предупреждение и используем allowed_root вместо этого.
+
 		logger.warning("Requested dir %s is outside allowed data directory; using %s instead", root, allowed_root_resolved)
-		root = allowed_root_resolved
+		root = allowed_root_resolved # 
+		logger.info("Forced root to allowed directory: %s", root)
 
-	if not root.exists():
+
+	if not root.exists(): # 
+		# Если корневая директория не существует, создаем её.
+
+
 		logger.info("Creating root directory %s", root)
 		root.mkdir(parents=True, exist_ok=True)
 
-	app = create_app(str(root), token=args.token)
+	app = create_app(str(root), token=args.token) # 
+	logger.info("Application created with root: %s", app["root"])
+
 	# configure basic auth if provided
 	if args.basic_user and args.basic_pass:
 		app["basic_auth"] = (args.basic_user, args.basic_pass)
 
 	ssl_context = None
-	# Determine whether to run with TLS:
-	# Priority: --protocol if provided, otherwise legacy --tls flag.
-	if args.protocol is not None:
-		use_tls = (args.protocol == "https")
-	else:
-		use_tls = bool(args.tls)
+	# Determine protocol and TLS:
+	protocol = args.protocol or ("https" if args.tls else "http")
+	if protocol not in ("http", "https", "ftp"):
+		logger.error("Invalid protocol: %s", protocol)
+		return
+	use_tls = (protocol == "https")
+	is_ftp = (protocol == "ftp")
 
-	if use_tls:
+	if is_ftp:
+		if not FTP_AVAILABLE: # 
+		# FTP server requested but pyftpdlib not installed
+
+			logger.error("FTP protocol requested but pyftpdlib is not installed. Install with: pip install pyftpdlib")
+			return
+		# Start FTP server
+		authorizer = DummyAuthorizer()
+
+		# Determine permissions based on --ftp-permissions
+		perm_map = {
+			"read": "elr",  # list, enter, read
+			"write": "adfmw",  # append, delete, file rename, make dir, write
+			"full": "elradfmw"  # all permissions
+		}
+		permissions = perm_map[args.ftp_permissions] # 
+		logger.info("FTP: Using permissions: %s", permissions)
+
+
+		# Authentication logic for FTP:
+		# - If --ftp-allow-anonymous is set: allow anonymous access with specified permissions
+		# - Else if no auth configured: no anonymous, require auth
+		# - If only token configured: use token as password for user "user"
+		# - If only basic configured: use basic user/pass
+		# - If both configured: use basic user/pass (FTP limitation)
+
+		if args.ftp_allow_anonymous: # 
+			# Anonymous access allowed
+			authorizer.add_anonymous(str(root), perm=permissions)
+			logger.info("FTP: Anonymous access enabled with permissions: %s", permissions)
+		else:
+			# Require authentication
+			if not args.token and not (args.basic_user and args.basic_pass):
+				logger.error("FTP: Authentication required but no credentials provided. Use --ftp-allow-anonymous or provide --token or --basic-user/--basic-pass")
+				return
+			if args.basic_user and args.basic_pass:
+				# Use basic auth credentials
+				user = args.basic_user
+				passwd = args.basic_pass
+			else:
+				# Use token as password
+				user = "user"
+				passwd = args.token
+			authorizer.add_user(user, passwd, str(root), perm=permissions)
+			logger.info("FTP: Authenticated access with user '%s' and permissions: %s", user, permissions)
+
+		# Custom handler to log actions
+		class LoggingFTPHandler(FTPHandler):
+			def on_file_received(self, file):
+				logger.info("FTP: File uploaded: %s", file)
+			def on_file_sent(self, file):
+				logger.info("FTP: File downloaded: %s", file)
+			def on_delete(self, file):
+				logger.info("FTP: File deleted: %s", file)
+
+		handler = LoggingFTPHandler
+		handler.authorizer = authorizer
+
+		server = FTPServer((args.host, args.port), handler)
+		logger.info("Starting FTP server at ftp://%s:%s serving %s", args.host, args.port, root)
+		try:
+			server.serve_forever()
+		except KeyboardInterrupt:
+			logger.info("FTP server stopped")
+	elif use_tls:
 		# Determine cert/key
 		cert_path = args.cert
 		key_path = args.key
@@ -306,12 +452,17 @@ def main():
 		ssl_context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
 
 		logger.info("Starting file server at https://%s:%s serving %s", args.host, args.port, root)
+		web.run_app(app, host=args.host, port=args.port, ssl_context=ssl_context)
 	else:
 		logger.warning("Starting server without TLS. For production, use HTTPS to protect data in transit.")
 		logger.info("Starting file server at http://%s:%s serving %s", args.host, args.port, root)
-
-	web.run_app(app, host=args.host, port=args.port, ssl_context=ssl_context)
+		web.run_app(app, host=args.host, port=args.port, ssl_context=ssl_context)
 
 
 if __name__ == "__main__":
 	main()
+
+@register # register the goodbye function to be called at exit
+def goodbye():
+	print("Thank you for using FILE_SERVER!")
+	print("Goodbye!")

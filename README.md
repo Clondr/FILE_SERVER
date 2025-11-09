@@ -1,13 +1,14 @@
 ```markdown
 # File server (локальная сеть)
 
-Небольшой HTTP/HTTPS файловый сервер для локальной сети с простым клиентом и веб-интерфейсом.
+Небольшой HTTP/HTTPS/FTP файловый сервер для локальной сети с простым клиентом и веб-интерфейсом.
 
 Ключевые возможности
 - Листинг, загрузка (multipart/form-data), скачивание (поддержка Range), удаление файлов
 - Простая аутентификация по токену (X-Auth-Token или ?token=) и HTTP Basic
 - Ограничение доступа только папкой `data` рядом со скриптом
 - Поддержка HTTPS (локальные сертификаты или реальный CA)
+- Поддержка FTP протокола для совместимости с FTP-клиентами
 
 Требования
 - Python 3.8+
@@ -34,7 +35,7 @@ python3 file_server.py --host 0.0.0.0 --port 8080 --token mysecret
 - --token — простой токен для аутентификации (опционально)
 - --basic-user / --basic-pass — username и password для HTTP Basic (опционально)
 - --tls — (legacy) включить HTTPS (устаревающий флаг, сохранён для совместимости)
-- --protocol — новый аргумент: `http` или `https`. Если указан, имеет приоритет над `--tls`.
+- --protocol — новый аргумент: `http`, `https` или `ftp`. Если указан, имеет приоритет над `--tls`.
 - --cert/--key — пути к файлам сертификата и приватного ключа (PEM)
 - --generate-self-signed — сгенерировать временный самоподписанный сертификат (требует openssl)
 
@@ -274,7 +275,6 @@ curl -v --cacert ./path/to/rootCA.pem https://file-server.local:443/ui/
 
 ---
 
-Если хотите — могу добавить systemd unit, примеры nginx reverse-proxy конфигурации и пошаговые инструкции по установке `mkcert`/импорту `rootCA.pem` на Windows/macOS/Linux.
 
 ```
 # File server (локальная сеть)
@@ -503,3 +503,12 @@ python3 file_server.py \
   --basic-user alice \
   --basic-pass s3cr3t \
   --token mytoken123
+
+# FTP с токеном
+python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21 --token mysecret
+
+# FTP с базовой аутентификацией
+python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21 --basic-user alice --basic-pass s3cr3t
+
+# FTP без паролей(Чисто для тестов, для серьезных задач не использовать!!)
+python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21
