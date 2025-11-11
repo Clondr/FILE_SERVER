@@ -98,5 +98,35 @@ sudo dnf install python3-tkinter
 
 На Windows/macOS tkinter обычно включается вместе с официальным Python.
 
+9) GUI для сервера (CustomTkinter)
+
+Запуск GUI для управления сервером:
+
+```bash
+python3 server_gui.py
+```
+
+Установка зависимостей:
+
+```bash
+pip install customtkinter
+```
+
+На Linux также tkinter:
+
+Debian/Ubuntu:
+
+```bash
+sudo apt install python3-tk
+```
+
+Fedora:
+
+```bash
+sudo dnf install python3-tkinter
+```
+
+GUI позволяет конфигурировать сервер (хост, порт, директория, протокол, аутентификация, TLS, FTP) и запускать его с логами в реальном времени. Конфигурация сохраняется в `server_gui_config.json`.
+
 ---
 

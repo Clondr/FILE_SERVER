@@ -1,6 +1,6 @@
 # File server (local network)
 
-A small HTTP/HTTPS/FTP file server for local networks with a simple client and optional web UI.
+A small HTTP/HTTPS/FTP file server for local networks with a simple client, optional web UI, and GUI for management.
 
 Features
 - Listing, upload (multipart/form-data), download (Range support), delete files
@@ -8,6 +8,7 @@ Features
 - Restricts access to a `data` folder next to the script
 - HTTPS support (local certificates or real CA)
 - FTP protocol support for compatibility with FTP clients
+- GUI for easy server configuration and launch with real-time logs
 
 Requirements
 - Python 3.8+
@@ -319,3 +320,46 @@ python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21 --basic-user alic
 
 # FTP anonymous(Purely for testing, do not use for serious tasks!!)
 python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21
+
+## Server GUI
+
+A graphical interface for managing the server based on CustomTkinter is now available. The GUI allows easy configuration and launching of the server without the command line, with real-time log display.
+
+### Running the GUI
+
+```bash
+python3 server_gui.py
+```
+
+### Installing Dependencies
+
+The GUI uses CustomTkinter. Install it:
+
+```bash
+pip install customtkinter
+```
+
+On Linux, tkinter may also be required:
+
+Debian/Ubuntu:
+```bash
+sudo apt install python3-tk
+```
+
+Fedora:
+```bash
+sudo dnf install python3-tkinter
+```
+
+On Windows/macOS, tkinter is usually included with Python.
+
+### GUI Features
+
+- **Server Settings**: Host, port, directory, protocol (http/https/ftp).
+- **Authentication**: Token, Basic auth (username/password).
+- **TLS Settings**: Certificate and key paths, self-signed certificate generation.
+- **FTP Settings**: Allow anonymous access, permissions (read/write/full).
+- **Actions**: Start/stop server, save configuration.
+- **Logs**: Real-time display of server output.
+
+Configuration is saved in `server_gui_config.json` for convenience.

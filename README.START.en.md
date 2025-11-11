@@ -98,4 +98,34 @@ sudo dnf install python3-tkinter
 
 On Windows/macOS tkinter is usually bundled with Python from python.org.
 
+9) Server GUI (CustomTkinter)
+
+Run GUI for server management:
+
+```bash
+python3 server_gui.py
+```
+
+Install dependencies:
+
+```bash
+pip install customtkinter
+```
+
+On Linux also tkinter:
+
+Debian/Ubuntu:
+
+```bash
+sudo apt install python3-tk
+```
+
+Fedora:
+
+```bash
+sudo dnf install python3-tkinter
+```
+
+The GUI allows configuring the server (host, port, directory, protocol, authentication, TLS, FTP) and launching it with real-time logs. Configuration is saved in `server_gui_config.json`.
+
 ---
