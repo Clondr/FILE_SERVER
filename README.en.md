@@ -363,3 +363,4 @@ On Windows/macOS, tkinter is usually included with Python.
 - **Logs**: Real-time display of server output.
 
 Configuration is saved in `server_gui_config.json` for convenience.
+And before you start the server, make sure that you have the port that is in use open, otherwise it will not work.
