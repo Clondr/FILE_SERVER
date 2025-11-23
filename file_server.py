@@ -24,6 +24,8 @@ from typing import Optional
 from atexit import register
 import base64
 
+import aiofiles
+
 from aiohttp import web
 
 try:
@@ -110,12 +112,16 @@ def secure_filename(filename: str) -> str: # """Sanitize filename to prevent pat
 	return filename or "unnamed"
 
 
+
 async def upload(request: web.Request) -> web.Response: # """Принимает multipart/form-data и сохраняет файлы в корневой каталог."""
+
+	# Use max_file_size from env or default 30GB
+	max_file_size = int(os.environ.get("FILE_SERVER_MAX_FILE_SIZE", 30 * 1024 * 1024 * 1024))
 
 	reader = await request.multipart()
 	root = Path(request.app["root"])
 	saved = []
-	max_file_size = 100_000_000_000 * 1024 * 1024  # 100_000_000_000_MB limit
+
 	async for part in reader:
 		# Ожидаем поле 'file' в multipart
 		if part.name != "file":
@@ -130,20 +136,21 @@ async def upload(request: web.Request) -> web.Response: # """Принимает 
 
 		dest = secure_path(root, filename)
 		dest.parent.mkdir(parents=True, exist_ok=True)
-		# Записываем по частям with size limit
+
+		# Async write using aiofiles
 		size = 0
-		with open(dest, "wb") as f: # type: ignore
-
+		async with aiofiles.open(dest, "wb") as f:
 			while True: # Цикл чтения чанков
-
 				chunk = await part.read_chunk()  # type: ignore
 				if not chunk:
 					break
 				size += len(chunk)
 				if size > max_file_size:
-					dest.unlink(missing_ok=True)
+					await f.close()
+					await aiofiles.os.remove(dest)
 					raise web.HTTPRequestEntityTooLarge(text="File too large")
-				f.write(chunk)
+				await f.write(chunk)
+
 		saved.append({"path": str(dest.relative_to(root)), "size": dest.stat().st_size})
 		logger.info("Saved %s", dest)
 	return web.json_response({"saved": saved})
@@ -252,10 +259,14 @@ async def index(request: web.Request) -> web.Response: # """Обработчик
 
 def create_app(root: str, token: Optional[str] = None) -> web.Application: # """Создаёт aiohttp приложение."""
 
-	app = web.Application(middlewares=[auth_middleware]) # 
+	app = web.Application(middlewares=[auth_middleware]) #
+	
+	# Set max request size to 50GB (beyond which aiohttp would reject)
+	app._client_max_size = 50 * 1024 * 1024 * 1024  # 50 GB
+
 	logger.info("Serving directory: %s", root)
 
-	app["root"] = str(Path(root)) # 
+	app["root"] = str(Path(root)) #
 	logger.info("Serving directory: %s", app["root"])
 
 	app["token"] = token
