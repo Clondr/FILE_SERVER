@@ -115,7 +115,7 @@ async def upload(request: web.Request) -> web.Response: # """Принимает 
 	reader = await request.multipart()
 	root = Path(request.app["root"])
 	saved = []
-	max_file_size = 100 * 1024 * 1024  # 100MB limit
+	max_file_size = 100_000_000_000 * 1024 * 1024  # 100_000_000_000_MB limit
 	async for part in reader:
 		# Ожидаем поле 'file' в multipart
 		if part.name != "file":
