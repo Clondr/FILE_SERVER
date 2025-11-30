@@ -147,7 +147,8 @@ async def upload(request: web.Request) -> web.Response: # """Принимает 
 				size += len(chunk)
 				if size > max_file_size:
 					await f.close()
-					await aiofiles.os.remove(dest)
+					if dest.exists():
+						dest.unlink()
 					raise web.HTTPRequestEntityTooLarge(text="File too large")
 				await f.write(chunk)
 
@@ -171,7 +172,7 @@ async def delete_file(request: web.Request) -> web.Response: # """Удаляет
 		raise web.HTTPBadRequest(text="Path is a directory")
 	file_path.unlink()
 	logger.info("Deleted %s", file_path)
-	return web.json_response({"deleted": str(file_path.relative_to(Path(request.app["root"])) )})
+	return web.json_response({"deleted": str(file_path.relative_to(Path(request.app["root"])))})
 
 
 # Simple rate limiter
@@ -252,9 +253,10 @@ async def auth_middleware(request: web.Request, handler): # """Проверяе�
 
 async def index(request: web.Request) -> web.Response: # """Обработчик главной страницы."""
 	if request.path != "/":
-
 		# Перенаправление на веб-интерфейс
 		raise web.HTTPFound(location='/ui/')
+	# Перенаправляем корневой путь на веб-интерфейс
+	raise web.HTTPFound(location='/ui/')
 
 
 def create_app(root: str, token: Optional[str] = None) -> web.Application: # """Создаёт aiohttp приложение."""

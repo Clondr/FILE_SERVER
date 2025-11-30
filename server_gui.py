@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+#https://127.0.0.1:8000/ui/
+#http://127.0.0.1:8000/ui/
 """
 GUI for file_server.py using CustomTkinter.
 
