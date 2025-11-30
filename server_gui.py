@@ -276,6 +276,7 @@ class ServerGUI:
                     self.log_text.insert("end", log + "\n")
                     self.log_text.see("end")
                     self.log_text.configure(state="disabled")
+                    
             except queue.Empty:
                 pass
             self.root.after(100, update_logs)
@@ -287,4 +288,7 @@ def main():
     root.mainloop()
 
 if __name__ == "__main__":
+    print('https://127.0.0.1:8000/ui/')
+    print('http://127.0.0.1:8000/ui/')
     main()
+    
