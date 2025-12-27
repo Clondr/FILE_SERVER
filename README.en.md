@@ -330,6 +330,11 @@ A graphical interface for managing the server based on CustomTkinter is now avai
 ```bash
 python3 server_gui.py
 ```
+### Running the GUI for client
+
+```bash
+python3 client.py gui 
+```
 
 ### Installing Dependencies
 

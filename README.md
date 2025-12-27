@@ -524,6 +524,13 @@ python3 file_server.py --protocol ftp --host 0.0.0.0 --port 21
 python3 server_gui.py
 ```
 
+### Запуск GUI клиента
+
+```bash
+python3 client.py gui
+```
+
+
 ### Установка зависимостей
 
 GUI использует CustomTkinter. Установите его:
