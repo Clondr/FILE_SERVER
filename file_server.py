@@ -6,7 +6,7 @@
 - скачивание (передача файла, поддержка Range через FileResponse)
 - удаление файлов
 - простая аутентификация по токену (заголовок X-Auth-Token)
-    Stable version 1.0
+    Stable version 2.0
 Зависимости: aiohttp, aiofiles (опционально). См. requirements.txt
 """
 
@@ -200,7 +200,7 @@ async def auth_middleware(request: web.Request, handler): # """Проверяе�
 		return await handler(request)
 
 	# публичные пути: UI should be reachable without credentials so user can input them
-	if request.method == "GET" and (request.path == "/" or request.path.startswith("/ui")):
+	if request.method == "GET" and (request.path == "/" or request.path.startswith("/static")):
 		return await handler(request)
 
 	# Check authentication based on configuration
@@ -250,13 +250,10 @@ async def auth_middleware(request: web.Request, handler): # """Проверяе�
 	return await handler(request) # # Вызов следующего обработчика в цепочке
 
 
-
 async def index(request: web.Request) -> web.Response: # """Обработчик главной страницы."""
-	if request.path != "/":
-		# Перенаправление на веб-интерфейс
-		raise web.HTTPFound(location='/ui/')
-	# Перенаправляем корневой путь на веб-интерфейс
-	raise web.HTTPFound(location='/ui/')
+	# Serve index.html from static directory
+	static_dir = Path(__file__).parent / "static"
+	return web.FileResponse(path=str(static_dir / 'index.html'))
 
 
 def create_app(root: str, token: Optional[str] = None) -> web.Application: # """Создаёт aiohttp приложение."""
@@ -288,11 +285,8 @@ def create_app(root: str, token: Optional[str] = None) -> web.Application: # """
 	# Serve web UI static files from ./static relative to this script
 	static_dir = Path(__file__).parent / "static"
 	if static_dir.exists():
-		# Serve index.html at /ui/ first, then serve other static files under /ui/
-		async def serve_ui_index(request):
-			return web.FileResponse(path=static_dir / 'index.html')
-		app.add_routes([web.get('/ui/', serve_ui_index)])
-		app.router.add_static('/ui/', path=str(static_dir), show_index=False)
+		# Serve static files under /static/ prefix (index.html handled at root)
+		app.router.add_static('/static/', path=str(static_dir), show_index=False)
 
 	return app
 
@@ -473,8 +467,8 @@ def main(): # """Главная функция для запуска серве�
 
 
 if __name__ == "__main__":
-	print('https://127.0.0.1:8000/ui/')
-	print('http://127.0.0.1:8000/ui/')
+	print('https://127.0.0.1:8000/')
+	print('http://127.0.0.1:8000/')
 	main()
 	
 

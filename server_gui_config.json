@@ -1,14 +1,14 @@
 {
   "host": "0.0.0.0",
-  "port": 8000,
+  "port": 8080,
   "dir": "data",
   "token": "1976",
   "basic_user": "1976",
   "basic_pass": "1976",
-  "protocol": "https",
+  "protocol": "http",
   "cert": "",
   "key": "",
-  "generate_self_signed": true,
+  "generate_self_signed": false,
   "ftp_allow_anonymous": false,
   "ftp_permissions": "full"
 }
