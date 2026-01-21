@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>File Server UI</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>File Server</h1>
+    </header>
+
+    <section class="auth">
+      <div class="auth-row">
+        <label>Token: <input id="token" placeholder="X-Auth-Token (если есть)"></label>
+        <button id="refresh">Refresh</button>
+        <button id="clearTokenBtn" title="Clear saved token">Очистити токен</button>
+      </div>
+      <div class="auth-row">
+        <label>Basic user: <input id="basicUser" placeholder="username"></label>
+        <label>Basic pass: <input id="basicPass" type="password" placeholder="password"></label>
+        <button id="saveCredsBtn" title="Save credentials">Зберегти</button>
+        <button id="clearCredsBtn" title="Clear credentials">Очистити креды</button>
+      </div>
+    </section>
+
+    <section class="upload">
+      <h2>Upload</h2>
+      <input type="file" id="fileInput">
+      <input type="text" id="remotePath" placeholder="remote path (optional, e.g. subdir/file.txt)">
+      <button id="uploadBtn">Upload</button>
+      <div id="uploadResult" class="result"></div>
+    </section>
+
+    <section class="files">
+      <h2>Files</h2>
+      <div id="fileList"></div>
+    </section>
+
+    <footer>
+      <small>Serves files from server-side <code>data</code> directory.</small>
+    </footer>
+  </div>
+
+  <!-- Modal for token entry -->
+  <div id="connectModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal-content">
+      <h3>Connect to File Server</h3>
+      <p>Введіть токен доступа або дані HTTP Basic (якщо сервер вимагає аутентифікацию) або натисніть "Пропустити" для доступа без даних.</p>
+      <input id="connectToken" type="text" placeholder="X-Auth-Token">
+      <input id="connectUser" type="text" placeholder="Basic username">
+      <input id="connectPass" type="password" placeholder="Basic password">
+      <div class="modal-actions">
+        <button id="connectBtn">Підключитися</button>
+        <button id="skipBtn">Пропустити</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/ui/app.js"></script>
+</body>
+</html>

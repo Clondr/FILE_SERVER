@@ -1,0 +1,9 @@
+{
+  "server_type": "FTP",
+  "server": "ftp://127.0.0.1:8080",
+  "token": "",
+  "basic_user": "alice",
+  "basic_pass": "s3cr3t",
+  "ca_cert": "",
+  "insecure": true
+}

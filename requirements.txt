@@ -1,0 +1,5 @@
+aiohttp>=3.8
+aiofiles>=23.0
+requests>=2.28
+pyftpdlib>=1.5.7
+customtkinter>=5.2.0

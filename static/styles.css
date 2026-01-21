@@ -1,0 +1,24 @@
+body { font-family: Inter, Roboto, Arial, sans-serif; background:#f6f8fa; color:#111; margin:0; padding:0 }
+.app { max-width:900px; margin:28px auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,0.06) }
+header h1{margin:0 0 12px}
+.auth{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+.upload{margin-bottom:16px}
+.files{margin-top:8px}
+.file-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-bottom:1px solid #eee}
+.file-item .meta{flex:1}
+.file-item button{margin-left:8px}
+.result{margin-top:8px;color:green}
+button{background:#0366d6;color:#fff;border:none;padding:8px 12px;border-radius:6px;cursor:pointer}
+button:disabled{opacity:.6}
+input[type=text]{padding:6px;border:1px solid #ddd;border-radius:6px}
+/* small secondary button */
+button.secondary{background:#e6eef9;color:#0366d6;padding:6px 10px;border-radius:6px}
+footer{margin-top:12px;color:#666}
+
+/* Modal styles */
+.modal{position:fixed;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000}
+.modal[aria-hidden="true"]{display:none}
+.modal-content{background:#fff;padding:20px;border-radius:8px;max-width:480px;width:90%;box-shadow:0 10px 30px rgba(0,0,0,0.2)}
+.modal-content h3{margin-top:0}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.modal-content input[type=text]{width:100%;padding:8px;border:1px solid #ddd;border-radius:6px}
