@@ -6,7 +6,7 @@
 - скачивание (передача файла, поддержка Range через FileResponse)
 - удаление файлов
 - простая аутентификация по токену (заголовок X-Auth-Token)
-    Stable version 2.0
+    Stable version 3.0
 Зависимости: aiohttp, aiofiles (опционально). См. requirements.txt
 """
 
@@ -91,9 +91,85 @@ async def download_file(request: web.Request) -> web.StreamResponse: # """Отд
 	if not file_path.exists() or not file_path.is_file():
 		logger.warning("File not found: %s", rel_path)
 		raise web.HTTPNotFound(text="File not found")
-	# aiohttp.web.FileResponse поддерживает range-запросы
+	
+	# Get file size
+	file_size = file_path.stat().st_size
+	
+	# Check for Range header (for partial content requests - streaming support)
+	range_header = request.headers.get("Range")
+	
+	if range_header:
+		# Parse Range header: "bytes=start-end"
+		try:
+			range_spec = range_header.replace("bytes=", "")
+			start_str, end_str = range_spec.split("-")
+			start = int(start_str) if start_str else 0
+			end = int(end_str) if end_str else file_size - 1
+			
+			# Validate range
+			if start >= file_size or end < start:
+				raise web.HTTPRangeNotSatisfiable(text="Range not satisfiable")
+			
+			# Clamp end to file size
+			if end >= file_size:
+				end = file_size - 1
+			
+			content_length = end - start + 1
+			
+			logger.info("Range request for %s: bytes %d-%d/%d", file_path, start, end, file_size)
+			
+			# Create response with proper headers for partial content
+			response = web.StreamResponse(
+				status=206,  # Partial Content
+				headers={
+					"Content-Type": "application/octet-stream",
+					"Content-Length": str(content_length),
+					"Content-Range": f"bytes {start}-{end}/{file_size}",
+					"Accept-Ranges": "bytes",
+					"Cache-Control": "no-cache",
+				}
+			)
+			
+			# Open file and seek to start position
+			f = await aiofiles.open(file_path, "rb")
+			await f.seek(start)
+			
+			async def file_sender():
+				chunk_size = 64 * 1024  # 64KB chunks
+				remaining = content_length
+				while remaining > 0:
+					to_read = min(chunk_size, remaining)
+					chunk = await f.read(to_read)
+					if not chunk:
+						break
+					yield chunk
+					remaining -= len(chunk)
+				await f.close()
+			
+			response.enable_chunked_encoding()
+			response.disable_compression()
+			return response
+			
+		except (ValueError, Exception) as e:
+			logger.warning("Invalid Range header %s: %s", range_header, e)
+			# Fall back to full file download
+			pass
+	
+	# No Range header or invalid - return full file with streaming support
 	logger.info("Downloaded %s", file_path)
-	return web.FileResponse(path=str(file_path))
+	response = web.FileResponse(
+		path=str(file_path),
+		status=200,
+		headers={
+			"Content-Type": "application/octet-stream",
+			"Content-Length": str(file_size),
+			"Accept-Ranges": "bytes",
+			"Cache-Control": "no-cache",
+			# Connection timeout handling for large files on mobile
+			"Keep-Alive": "timeout=300, max=100",
+		}
+	)
+	return response
 
 
 def secure_filename(filename: str) -> str: # """Sanitize filename to prevent path traversal and other issues."""
@@ -207,14 +283,18 @@ async def auth_middleware(request: web.Request, handler): # """Проверяе�
 	token_valid = False
 	basic_valid = False
 
-	# Check token if configured
+	# Get query params for auth (supports download via URL with auth params)
+	query_params = request.query
+
+	# Check token if configured - support both header and query param
 	if token:
-		req_token = request.headers.get("X-Auth-Token") or request.query.get("token")
+		req_token = request.headers.get("X-Auth-Token") or query_params.get("token")
 		if req_token and req_token == token:
 			token_valid = True
 
-	# Check basic auth if configured
+	# Check basic auth if configured - support both header and query params
 	if basic:
+		# Try header first
 		auth_hdr = request.headers.get("Authorization", "")
 		if auth_hdr.startswith("Basic "):
 			try:
@@ -225,6 +305,13 @@ async def auth_middleware(request: web.Request, handler): # """Проверяе�
 					basic_valid = True
 			except Exception:
 				pass
+		
+		# Also support query params for direct downloads (user=xxx&pass=xxx)
+		if not basic_valid:
+			req_user = query_params.get("user")
+			req_pass = query_params.get("pass")
+			if req_user and req_pass and req_user == basic[0] and req_pass == basic[1]:
+				basic_valid = True
 
 	# Authentication logic:
 	# - If only token configured: require token

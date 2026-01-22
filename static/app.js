@@ -42,13 +42,48 @@ async function refresh(){
       dlBtn.onclick = async ()=>{
         dlBtn.disabled=true; dlBtn.textContent='Downloading...';
         try{
-          const r = await api(`/download/${encodePath(f.path)}`, {token});
-          const blob = await r.blob();
+          const filename = f.path.split('/').pop();
+          const fileSize = f.size;
+          const downloadUrl = `/download/${encodePath(f.path)}`;
+          
+          // Build auth params for URL
+          const tokenVal = token || (document.getElementById('token') ? document.getElementById('token').value : null) || localStorage.getItem('fs_token');
+          const basicUser = (document.getElementById('basicUser') ? document.getElementById('basicUser').value : '') || localStorage.getItem('fs_user') || '';
+          const basicPass = (document.getElementById('basicPass') ? document.getElementById('basicPass').value : '') || localStorage.getItem('fs_pass') || '';
+          
+          // Build URL with auth params - simplest approach for reliable downloads
+          let fullUrl = downloadUrl;
+          const params = new URLSearchParams();
+          if (tokenVal) params.set('token', tokenVal);
+          if (basicUser && basicPass) {
+            params.set('user', basicUser);
+            params.set('pass', basicPass);
+          }
+          if (params.toString()) {
+            fullUrl += '?' + params.toString();
+          }
+          
+          // Use direct download via browser - most reliable for large files
+          // The browser handles streaming natively without memory issues
           const a = document.createElement('a');
-          const url = URL.createObjectURL(blob);
-          a.href = url; a.download = f.path.split('/').pop(); document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+          a.href = fullUrl;
+          a.download = filename;
+          a.target = '_blank'; // Open in new tab/window for better mobile support
+          a.rel = 'noopener noreferrer';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          
+          // Update button to show download started
+          dlBtn.textContent = 'Download started...';
+          
+          // Reset after a delay
+          setTimeout(() => {
+            dlBtn.textContent = 'Download (save)';
+          }, 3000);
+          
         }catch(e){ alert('Download error: '+e.message) }
-        dlBtn.disabled=false; dlBtn.textContent='Download (save)';
+        dlBtn.disabled=false;
       };
       const del = document.createElement('button'); del.textContent='Delete'; del.onclick = async ()=>{
         if (!confirm('Delete '+f.path+'?')) return;
