@@ -5,10 +5,10 @@
   "token": "1976",
   "basic_user": "1976",
   "basic_pass": "1976",
-  "protocol": "http",
+  "protocol": "https",
   "cert": "",
   "key": "",
-  "generate_self_signed": false,
+  "generate_self_signed": true,
   "ftp_allow_anonymous": false,
   "ftp_permissions": "full"
 }

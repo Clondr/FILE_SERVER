@@ -288,7 +288,7 @@ def main():
     root.mainloop()
 
 if __name__ == "__main__":
-    print('https://127.0.0.1:8000/ui/')
-    print('http://127.0.0.1:8000/ui/')
+    print('https://127.0.0.1:8000/')
+    print('http://127.0.0.1:8000/')
     main()
     
